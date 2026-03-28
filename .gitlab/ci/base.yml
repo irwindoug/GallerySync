@@ -1,0 +1,85 @@
+# ── Shared job defaults ───────────────────────────────────────────────────────
+
+.default_job:
+  interruptible: true
+  retry: 1
+  before_script:
+    - set -eu
+
+# ── Phase control mixins ──────────────────────────────────────────────────────
+#
+# Advisory jobs allow pipeline success even when the check fails.
+# To promote a job to blocking: remove "extends: .advisory" from the job.
+# Document the promotion in docs/ci-policy-phases.md.
+
+.advisory:
+  allow_failure: true
+
+.blocking:
+  allow_failure: false
+
+# ── Rule sets ─────────────────────────────────────────────────────────────────
+
+.mr_only:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+.branch_or_mr:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH
+
+.release_refs_only:
+  rules:
+    - if: $CI_COMMIT_TAG
+    - if: $CI_COMMIT_BRANCH =~ /^release\/.+$/
+
+yaml_lint:
+  extends:
+    - .default_job
+    - .branch_or_mr
+  stage: validate
+  image: python:3.12-alpine
+  script:
+    - pip install --quiet yamllint
+    - |
+      yamllint \
+        -d '{extends: default, rules: {line-length: {max: 160}, document-start: disable}}' \
+        .
+
+shell_script_lint:
+  extends:
+    - .default_job
+    - .branch_or_mr
+  stage: validate
+  image: koalaman/shellcheck-alpine:stable
+  script:
+    - |
+      scripts="$(find . -type f \( -name '*.sh' -o -path './.gitlab/*' \) ! -path './.git/*' | sort)"
+      if [ -z "$scripts" ]; then
+        echo "No shell scripts found. TODO: add repository shell scripts or narrow this search."
+        exit 0
+      fi
+      echo "$scripts" | while IFS= read -r file; do
+        [ -n "$file" ] || continue
+        case "$file" in
+          *.sh) shellcheck "$file" ;;
+          *)
+            if head -n 1 "$file" | grep -qE '^#!.*/(ba)?sh'; then
+              shellcheck "$file"
+            else
+              echo "Skipping non-shell file: $file"
+            fi
+            ;;
+        esac
+      done
+
+mr_lint_unit_tests:
+  extends:
+    - .default_job
+    - .branch_or_mr
+  stage: validate
+  image: python:3.12-alpine
+  script:
+    - pip install --quiet -e .
+    - python -m unittest discover -s tests -p 'test_*.py'

@@ -1,0 +1,13 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  release:
+    uses: dirwin/platform-infra/.github/workflows/release-wordpress-plugin.yml@main
+    with:
+      plugin_name: gallerysync
+    secrets: inherit

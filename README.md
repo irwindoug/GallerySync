@@ -1,113 +1,96 @@
 # Gallery Sync
 
-Open-source WordPress plugin that connects to a Cloudflare Workers API for licensing, entitlements, and advanced integrations. The plugin only performs API calls, feature gating, and UI rendering; paid logic lives server-side.
+Open-source WordPress plugin with a Cloudflare Worker license server, Supabase Postgres persistence, and Stripe billing webhooks.
+
+## What this repo now includes
+
+- WordPress plugin UI/client for license validation and premium feature gating.
+- New Cloudflare Worker in `worker/` (TypeScript, deployed with Wrangler).
+- Supabase SQL migrations and seed files in `supabase/`.
+- GitHub Actions for CI, worker deploy, DB migrations, and optional Stripe webhook setup.
+- Legacy sync worker in `workers/` remains untouched for backward compatibility.
 
 ## Architecture
 
-- WordPress plugin: UI, settings, REST proxy, and cached entitlements.
-- Cloudflare Workers API: license validation, plan enforcement, entitlements, advanced integrations, and sync orchestration.
-- The plugin is an untrusted client; forks do not unlock paid features.
-- Deployments happen via GitHub Actions.
-- Stripe subscriptions drive license entitlements.
-- Site limits are enforced server-side.
+- WordPress plugin:
+  - Stores `gallery_sync_instance_id` (UUID v4) once per site.
+  - Stores encrypted `gallery_sync_license_key` in options.
+  - Calls Worker over HTTPS for `/validate-license` and `/create-checkout-session`.
+  - Caches last valid license response to reduce API calls.
+- Worker (`worker/`):
+  - Source of truth for licenses and activations.
+  - Verifies Stripe webhook signatures.
+  - Enforces `(instance_id + normalized_domain)` and `max_activations`.
+  - Supports `lifetime` and `subscription` license types.
+- Supabase Postgres:
+  - Stores products, plans, licenses, activations, webhook events, and audit logs.
+  - Uses `license_lookup_digest` + `license_verifier_hash` (no plaintext license keys stored).
 
-## Setup
+## Worker routes
 
-- Cloudflare Workers setup: `docs/CLOUDFLARE_WORKERS_SETUP.md`
-- Migration mapping: `docs/MIGRATION_TO_WORKERS.md`
+- `GET /health`
+- `POST /stripe/webhook`
+- `POST /validate-license`
+- `POST /create-checkout-session`
 
-## File Structure
+## Quickstart for forks
 
-````text
-gallery-sync.php
-.vscode/
-assets/
-  ├─ css/
-  │  ├─ gallery-sync-admin-ui.css
-  │  ├─ gallery-sync-progress.css
-  │  └─ gallery-sync-tooltips.css
-  └─ js/
-     ├─ gallery-sync-common.js
-     ├─ gallery-sync-connection-test.js
-     ├─ gallery-sync.js
-     ├─ gallery-sync-sync-worker.js
-     ├─ gallery-sync-license-test.js
-     └─ gallery-sync-tooltips.js
-includes/
-  ├─ admin/
-  │  ├─ admin-page.php
-  │  ├─ enqueue.php
-  │  ├─ integrations-page.php
-  │  └─ settings-page.php
-  ├─ config/
-  │  ├─ class-gallery-sync-service.php
-  │  ├─ license.php
-  │  └─ sync-storage.php
-  ├─ libraries/
-  ├─ routes/
-  │  └─ rest-routes.php
-  ├─ services/
-  │  ├─ trait-gallery-sync-service-crypto.php
-  │  ├─ trait-gallery-sync-service-progress.php
-  │  └─ trait-gallery-sync-service-sync.php
-  ├─ api-client.php
-  └─ features.php
-workers/
-  ├─ src/worker.js
-  └─ wrangler.toml
-docs/
-  ├─ plugins/
-  └─ libraries/
-````
+1. Create Cloudflare resources.
+- Create a Cloudflare API token with Workers deploy permissions.
+- Get your `CLOUDFLARE_ACCOUNT_ID`.
 
-## Root Plugin Bootstrap
+2. Create Supabase project.
+- Get the Postgres connection string.
+- Save it as `SUPABASE_DB_URL` (or `DATABASE_URL`) in GitHub Actions secrets.
 
-- `gallery-sync.php` loads `includes/loader.php`; REST routes are registered in `includes/routes/rest-routes.php`.
+3. Create Stripe product and prices.
+- Create one-time and/or subscription prices.
+- Update `supabase/seeds/001_products_plans.sql` with your real `stripe_price_id` values.
 
-## Includes
+4. Add GitHub Actions secrets.
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+- `SUPABASE_DB_URL` (or `DATABASE_URL`)
+- Optional for webhook setup workflow: `STRIPE_SECRET_KEY`, `WORKER_PUBLIC_URL`
 
-- `includes/api-client.php` – Cloudflare Workers API client.
-- `includes/features.php` – Entitlement caching and feature gating.
-- `includes/admin/admin-page.php` – Overview page with source selection and sync controls.
-- `includes/admin/integrations-page.php` – Integration status (server-side entitlements).
-- `includes/admin/settings-page.php` – API base URL + license key settings and status refresh.
-- `includes/config/license.php` – License key storage and verification via the Workers API.
-- `includes/routes/rest-routes.php` – REST proxy endpoints under `gallery-sync/v1`.
-- Each directory under `includes/` has a `loader.php` that requires the PHP files in that directory, and `includes/loader.php` composes those loaders.
+5. Set Cloudflare Worker runtime secrets.
+- `DATABASE_URL`
+- `STRIPE_SECRET_KEY`
+- `STRIPE_WEBHOOK_SECRET`
+- `LICENSE_HMAC_SECRET`
 
-## REST API Routes (gallery-sync/v1)
+6. Run workflows from Actions.
+- Run `DB Migrate`.
+- Run `Deploy Worker`.
+- Optional: run `Stripe Webhook Setup` or create webhook manually.
 
-These routes proxy to the Cloudflare Workers API and cache progress/entitlements locally.
+7. Configure Stripe webhook endpoint.
+- Endpoint URL: `https://<your-worker-domain>/stripe/webhook`
+- Events:
+  - `checkout.session.completed`
+  - `customer.subscription.created`
+  - `customer.subscription.updated`
+  - `customer.subscription.deleted`
 
-- `GET /features` – Cached entitlements
-- `POST /features/refresh` – Refresh entitlements (uses current license key)
-- `GET /test` – Connection test
-- `GET /albums` – List albums (server-side)
-- `GET /progress` – Current sync progress (server-side)
-- `GET /sync-status` – Running flag + progress existence (server-side)
-- `POST /run-sync` – Start sync
-- `POST /cancel` – Cancel a specific album
-- `POST /skip-asset` – Skip a specific asset
-- `POST /cancel-sync` – Cancel entire sync
-- `POST /reset-sync` – Reset stuck sync
-- `POST /complete` – Clear progress after completion
+8. Configure WordPress plugin settings.
+- Set Worker API Base URL (HTTPS).
+- Enter license key.
+- Click `Validate Now`.
+- Use `Purchase / Upgrade` to open checkout session URL.
 
-## Cloudflare Workers
+## Local development commands
 
-- `workers/src/worker.js` defines endpoint stubs and enforces plan checks server-side.
-- `workers/wrangler.toml` provides the deployment configuration.
+- Worker:
+  - `cd worker`
+  - `npm install`
+  - `npm run typecheck`
+  - `npm run dev`
+  - `npm run deploy`
+- Database migrations (local):
+  - `psql "$DATABASE_URL" -f supabase/migrations/0001_init.sql`
+  - `psql "$DATABASE_URL" -f supabase/seeds/001_products_plans.sql`
 
-## Usage
+## Bootstrap helper
 
-1) Set the Cloudflare Workers API base URL and license key in Settings.
-2) Choose a source enabled by your plan.
-3) Click **Run Sync Now** to start the server-side sync.
-
-## AI Assistance
-
-This project includes AI agent instructions for OpenAI Codex and GitHub Copilot:
-
-- `docs/codex-instructions.md`
-- `.github/copilot-instructions.md`
-
-These describe repository structure, plugin architecture, and documentation sources used by AI assistants.
+- Optional script: `scripts/bootstrap.sh`
+- Uses `gh` CLI to set common GitHub secrets in your fork.

@@ -1,0 +1,8 @@
+name = "gallery-sync-license-worker"
+main = "src/index.ts"
+compatibility_date = "2025-02-01"
+compatibility_flags = ["nodejs_compat"]
+workers_dev = true
+
+[vars]
+PRODUCT_SLUG = "gallery-sync-pro"

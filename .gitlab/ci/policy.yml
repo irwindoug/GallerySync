@@ -1,0 +1,14 @@
+# Policy Stage Jobs
+#
+# This stage enforces merge request hygiene rules.
+# Docker and network policy checks live in docker_audit.yml and network_audit.yml.
+# See docs/mr-hygiene-policy.md for the full policy specification.
+
+merge_request_lint:
+  extends:
+    - .default_job
+    - .mr_only
+  stage: policy
+  image: python:3.12-alpine
+  script:
+    - python -m mr_lint --config mr-lint.toml

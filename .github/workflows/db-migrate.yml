@@ -1,0 +1,53 @@
+name: DB Migrate
+
+on:
+  workflow_dispatch:
+
+jobs:
+  migrate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify database secret
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          DB_URL="${SUPABASE_DB_URL:-${DATABASE_URL:-}}"
+          if [ -z "$DB_URL" ]; then
+            echo "::error::Missing SUPABASE_DB_URL or DATABASE_URL secret."
+            echo "Add one of these secrets in GitHub Settings > Secrets and variables > Actions, then rerun this workflow."
+            exit 1
+          fi
+
+      - name: Run migrations
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          DB_URL="${SUPABASE_DB_URL:-${DATABASE_URL:-}}"
+          if ! command -v psql >/dev/null 2>&1; then
+            echo "::error::psql not found on runner."
+            exit 1
+          fi
+
+          for migration in $(ls -1 supabase/migrations/*.sql | sort); do
+            echo "Applying ${migration}"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$migration"
+          done
+
+      - name: Run seeds
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          set -euo pipefail
+          DB_URL="${SUPABASE_DB_URL:-${DATABASE_URL:-}}"
+          for seed in $(ls -1 supabase/seeds/*.sql | sort); do
+            echo "Applying ${seed}"
+            psql "$DB_URL" -v ON_ERROR_STOP=1 -f "$seed"
+          done

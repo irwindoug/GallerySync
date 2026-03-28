@@ -122,3 +122,36 @@ function gallery_sync_admin_enqueue_assets() {
     }
 }
 add_action('admin_enqueue_scripts', 'gallery_sync_admin_enqueue_assets');
+
+function gallery_sync_force_relative_ajaxurl() {
+    if (!is_admin()) {
+        return;
+    }
+    $relative = admin_url('admin-ajax.php', 'relative');
+    if (!$relative) {
+        return;
+    }
+    // Force a same-origin ajaxurl to avoid CORS errors in embedded playgrounds.
+    echo '<script>window.ajaxurl=' . wp_json_encode($relative) . ';</script>';
+}
+add_action('admin_print_footer_scripts', 'gallery_sync_force_relative_ajaxurl', 9999);
+
+function gallery_sync_is_playground_webview(): bool {
+    $origin = isset($_SERVER['HTTP_ORIGIN']) ? (string) $_SERVER['HTTP_ORIGIN'] : '';
+    $referer = isset($_SERVER['HTTP_REFERER']) ? (string) $_SERVER['HTTP_REFERER'] : '';
+    $haystack = $origin . ' ' . $referer;
+    return $haystack !== '' && (stripos($haystack, 'vscode-webview://') !== false || stripos($haystack, 'vscode://') !== false);
+}
+
+function gallery_sync_maybe_disable_heartbeat() {
+    if (!is_admin()) {
+        return;
+    }
+    if (!gallery_sync_is_playground_webview()) {
+        return;
+    }
+    // Avoid CORS errors from Heartbeat in embedded VSCode webviews.
+    wp_dequeue_script('heartbeat');
+    wp_deregister_script('heartbeat');
+}
+add_action('admin_enqueue_scripts', 'gallery_sync_maybe_disable_heartbeat', 1);

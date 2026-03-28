@@ -4,6 +4,26 @@ if (!defined('ABSPATH')) exit;
 define('GALLERY_SYNC_FEATURES_TRANSIENT', 'gallery_sync_features_cache');
 
 function gallery_sync_get_features(bool $force = false): array {
+    if (!function_exists('gallery_sync_licensing_client')) {
+        return [
+            'valid' => false,
+            'plan' => 'free',
+            'features' => [
+                'sources' => ['immich'],
+                'integrations' => [
+                    'nextgen' => false,
+                    'envira' => false,
+                    'foogallery' => false,
+                ],
+            ],
+            'expires_at' => null,
+            'ttl' => 300,
+            'activations_used' => 0,
+            'max_activations' => 0,
+            'source' => 'missing_licensing_client',
+        ];
+    }
+
     if (!$force) {
         $cached = get_transient(GALLERY_SYNC_FEATURES_TRANSIENT);
         if (is_array($cached)) {
@@ -11,39 +31,10 @@ function gallery_sync_get_features(bool $force = false): array {
         }
     }
 
-    if (!function_exists('gallery_sync_api_request')) {
-        return [
-            'valid' => false,
-            'plan' => 'none',
-            'features' => [],
-            'expires_at' => null,
-            'ttl' => 300,
-            'site_limit' => 0,
-            'current_sites_used' => 0,
-            'source' => 'missing_api_client',
-        ];
-    }
-
-    $response = gallery_sync_api_request('GET', '/v1/features');
-    if (is_wp_error($response)) {
-        $fallback = [
-            'valid' => false,
-            'plan' => 'none',
-            'features' => [],
-            'expires_at' => null,
-            'ttl' => 300,
-            'site_limit' => 0,
-            'current_sites_used' => 0,
-            'source' => 'api_error',
-            'error' => $response->get_error_message(),
-        ];
-        set_transient(GALLERY_SYNC_FEATURES_TRANSIENT, $fallback, MINUTE_IN_SECONDS * 5);
-        return $fallback;
-    }
-
-    $ttl = isset($response['ttl']) && is_int($response['ttl']) ? $response['ttl'] : (int) MINUTE_IN_SECONDS * 10;
+    $response = gallery_sync_licensing_client()->validate($force);
+    $ttl = isset($response['ttl']) && is_numeric($response['ttl']) ? (int) $response['ttl'] : (int) HOUR_IN_SECONDS * 6;
     if ($ttl <= 0) {
-        $ttl = MINUTE_IN_SECONDS * 10;
+        $ttl = (int) HOUR_IN_SECONDS * 6;
     }
 
     set_transient(GALLERY_SYNC_FEATURES_TRANSIENT, $response, $ttl);

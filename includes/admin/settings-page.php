@@ -31,6 +31,10 @@ function gallery_sync_settings_page() {
     $features = function_exists('gallery_sync_get_features') ? gallery_sync_get_features(false) : [];
     $is_valid = !empty($features['valid']);
     $plan = !empty($features['plan']) ? (string) $features['plan'] : 'Unknown';
+    $expires_at = !empty($features['expires_at']) ? (string) $features['expires_at'] : null;
+    $activations_used = isset($features['activations_used']) ? (int) $features['activations_used'] : 0;
+    $max_activations = isset($features['max_activations']) ? (int) $features['max_activations'] : 0;
+    $instance_id = function_exists('gallery_sync_get_instance_id') ? gallery_sync_get_instance_id() : '';
 
     $messages = get_settings_errors('gallery_sync_settings_messages');
 
@@ -63,12 +67,12 @@ function gallery_sync_settings_page() {
 
             $license_key = sanitize_text_field($_POST['license_key'] ?? '');
             gallery_sync_update_license_key($license_key);
-            if (function_exists('gallery_sync_activate_license')) {
-                gallery_sync_activate_license();
-            }
             $features = function_exists('gallery_sync_refresh_features') ? gallery_sync_refresh_features() : [];
             $is_valid = !empty($features['valid']);
             $plan = !empty($features['plan']) ? (string) $features['plan'] : 'Unknown';
+            $expires_at = !empty($features['expires_at']) ? (string) $features['expires_at'] : null;
+            $activations_used = isset($features['activations_used']) ? (int) $features['activations_used'] : 0;
+            $max_activations = isset($features['max_activations']) ? (int) $features['max_activations'] : 0;
 
             add_settings_error(
                 'gallery_sync_settings_messages',
@@ -137,13 +141,22 @@ function gallery_sync_settings_page() {
                                    class="gallery-sync-tip"
                                    data-gallery-sync-tooltip="License key for your subscription.">
                             <div class="gallery-sync-inline-actions">
-                                <button type="button" class="button" id="gallery-sync-refresh-license-btn">Refresh Status</button>
+                                <button type="button" class="button" id="gallery-sync-refresh-license-btn">Validate Now</button>
+                                <button type="button" class="button button-primary" id="gallery-sync-purchase-license-btn">Purchase / Upgrade</button>
                                 <span id="gallery-sync-refresh-license-result" class="gallery-sync-helper"></span>
                             </div>
                         </div>
                         <span class="gallery-sync-status <?= $is_valid ? 'is-active' : 'is-inactive' ?>">
                             <?= $is_valid ? 'Active' : 'Inactive' ?>
                         </span>
+                    </div>
+
+                    <div class="gallery-sync-field">
+                        <label>License Details</label>
+                        <p class="gallery-sync-helper"><strong>Instance ID:</strong> <code><?= esc_html($instance_id) ?></code></p>
+                        <p class="gallery-sync-helper"><strong>Plan:</strong> <?= esc_html($plan) ?></p>
+                        <p class="gallery-sync-helper"><strong>Expiry:</strong> <?= $expires_at ? esc_html($expires_at) : 'Never (lifetime)'; ?></p>
+                        <p class="gallery-sync-helper"><strong>Activations:</strong> <?= esc_html((string) $activations_used) ?><?= $max_activations > 0 ? ' / ' . esc_html((string) $max_activations) : ''; ?></p>
                     </div>
 
                     <?php gallery_sync_render_api_endpoint_notice(); ?>

@@ -2,25 +2,58 @@
 if (!defined('ABSPATH')) exit;
 
 define('GALLERY_SYNC_LICENSE_OPT', 'gallery_sync_license_key');
-
 define('GALLERY_SYNC_LICENSE_CACHE_PREFIX', 'gallery_sync_license_status_');
 
-function gallery_sync_license_encrypt(string $value): string {
-    if ($value === '') {
+function gallery_sync_license_crypto_key(): string {
+    return hash('sha256', AUTH_KEY . SECURE_AUTH_KEY . LOGGED_IN_KEY, true);
+}
+
+function gallery_sync_license_encrypt_with_sodium(string $value): string {
+    if (!function_exists('sodium_crypto_secretbox')) {
         return '';
     }
 
-    $cipherAlgo = 'aes-256-gcm';
-    $ivLength   = openssl_cipher_iv_length($cipherAlgo);
-    $iv         = random_bytes($ivLength);
-    $tag        = '';
+    $key = substr(gallery_sync_license_crypto_key(), 0, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    $nonce = random_bytes(SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+    $ciphertext = sodium_crypto_secretbox($value, $nonce, $key);
+    return 'sod:' . base64_encode($nonce . $ciphertext);
+}
+
+function gallery_sync_license_decrypt_with_sodium(string $value): string {
+    if (!function_exists('sodium_crypto_secretbox_open')) {
+        return '';
+    }
+
+    $payload = str_starts_with($value, 'sod:') ? substr($value, 4) : $value;
+    $raw = base64_decode($payload, true);
+    if ($raw === false || strlen($raw) <= SODIUM_CRYPTO_SECRETBOX_NONCEBYTES) {
+        return '';
+    }
+
+    $key = substr(gallery_sync_license_crypto_key(), 0, SODIUM_CRYPTO_SECRETBOX_KEYBYTES);
+    $nonce = substr($raw, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+    $ciphertext = substr($raw, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+
+    $plaintext = sodium_crypto_secretbox_open($ciphertext, $nonce, $key);
+    return is_string($plaintext) ? $plaintext : '';
+}
+
+function gallery_sync_license_encrypt_with_openssl(string $value): string {
+    if (!function_exists('openssl_encrypt')) {
+        return '';
+    }
+
+    $cipher_algo = 'aes-256-gcm';
+    $iv_length = openssl_cipher_iv_length($cipher_algo);
+    $iv = random_bytes($iv_length);
+    $tag = '';
 
     $salt = hash('sha256', SECURE_AUTH_KEY, true);
     $key = hash_pbkdf2('sha256', AUTH_KEY, $salt, 600000, 32, true);
 
     $ciphertext = openssl_encrypt(
         $value,
-        $cipherAlgo,
+        $cipher_algo,
         $key,
         OPENSSL_RAW_DATA,
         $iv,
@@ -33,7 +66,58 @@ function gallery_sync_license_encrypt(string $value): string {
         return '';
     }
 
-    return base64_encode($iv . $tag . $ciphertext);
+    return 'gcm:' . base64_encode($iv . $tag . $ciphertext);
+}
+
+function gallery_sync_license_decrypt_with_openssl(string $value): string {
+    if (!function_exists('openssl_decrypt')) {
+        return '';
+    }
+
+    $payload = str_starts_with($value, 'gcm:') ? substr($value, 4) : $value;
+    $raw = base64_decode($payload, true);
+    if ($raw === false) {
+        return '';
+    }
+
+    $cipher_algo = 'aes-256-gcm';
+    $iv_length = openssl_cipher_iv_length($cipher_algo);
+    $tag_length = 16;
+
+    if (strlen($raw) <= $iv_length + $tag_length) {
+        return '';
+    }
+
+    $iv = substr($raw, 0, $iv_length);
+    $tag = substr($raw, $iv_length, $tag_length);
+    $ciphertext = substr($raw, $iv_length + $tag_length);
+
+    $salt = hash('sha256', SECURE_AUTH_KEY, true);
+    $key = hash_pbkdf2('sha256', AUTH_KEY, $salt, 600000, 32, true);
+
+    $plaintext = openssl_decrypt(
+        $ciphertext,
+        $cipher_algo,
+        $key,
+        OPENSSL_RAW_DATA,
+        $iv,
+        $tag
+    );
+
+    return is_string($plaintext) ? $plaintext : '';
+}
+
+function gallery_sync_license_encrypt(string $value): string {
+    if ($value === '') {
+        return '';
+    }
+
+    $sodium = gallery_sync_license_encrypt_with_sodium($value);
+    if ($sodium !== '') {
+        return $sodium;
+    }
+
+    return gallery_sync_license_encrypt_with_openssl($value);
 }
 
 function gallery_sync_license_decrypt(string $value): string {
@@ -41,36 +125,21 @@ function gallery_sync_license_decrypt(string $value): string {
         return '';
     }
 
-    $raw = base64_decode($value, true);
-    if ($raw === false) {
-        return '';
+    if (str_starts_with($value, 'sod:')) {
+        return gallery_sync_license_decrypt_with_sodium($value);
     }
 
-    $cipherAlgo = 'aes-256-gcm';
-    $ivLength   = openssl_cipher_iv_length($cipherAlgo);
-    $tagLength  = 16;
-
-    if (strlen($raw) <= $ivLength + $tagLength) {
-        return '';
+    if (str_starts_with($value, 'gcm:')) {
+        return gallery_sync_license_decrypt_with_openssl($value);
     }
 
-    $iv         = substr($raw, 0, $ivLength);
-    $tag        = substr($raw, $ivLength, $tagLength);
-    $ciphertext = substr($raw, $ivLength + $tagLength);
+    // Backward compatibility for legacy values without prefixes.
+    $decrypted = gallery_sync_license_decrypt_with_sodium($value);
+    if ($decrypted !== '') {
+        return $decrypted;
+    }
 
-    $salt = hash('sha256', SECURE_AUTH_KEY, true);
-    $key = hash_pbkdf2('sha256', AUTH_KEY, $salt, 600000, 32, true);
-
-    $plaintext = openssl_decrypt(
-        $ciphertext,
-        $cipherAlgo,
-        $key,
-        OPENSSL_RAW_DATA,
-        $iv,
-        $tag
-    );
-
-    return $plaintext !== false ? $plaintext : '';
+    return gallery_sync_license_decrypt_with_openssl($value);
 }
 
 function gallery_sync_update_license_key(string $plain_key): void {
@@ -91,6 +160,9 @@ function gallery_sync_maybe_migrate_license_key(string $raw): string {
 
     $decrypted = gallery_sync_license_decrypt($raw);
     if ($decrypted !== '') {
+        if (!str_starts_with($raw, 'sod:') && function_exists('sodium_crypto_secretbox')) {
+            gallery_sync_update_license_key($decrypted);
+        }
         return $decrypted;
     }
 
@@ -122,25 +194,19 @@ function gallery_sync_validate_license_key(string $key, bool $force = false): bo
         }
     }
 
-    if (!function_exists('gallery_sync_api_request') || !gallery_sync_is_api_configured()) {
-        return false;
-    }
-
-    $response = gallery_sync_api_request('POST', '/v1/license/verify', [
-        'license_key' => $key,
-        'site_url' => home_url(),
-    ]);
-
-    if (is_wp_error($response)) {
+    if (!function_exists('gallery_sync_licensing_client')) {
         set_transient($cache_key, 0, MINUTE_IN_SECONDS * 10);
         return false;
     }
 
-    $is_valid = !empty($response['valid']);
-    $ttl = isset($response['ttl']) && is_int($response['ttl']) ? $response['ttl'] : (int) HOUR_IN_SECONDS * 6;
-    $ttl = $ttl > 0 ? $ttl : (int) HOUR_IN_SECONDS * 6;
+    $status = gallery_sync_licensing_client()->validate($force);
+    $is_valid = !empty($status['valid']);
+
+    $ttl = isset($status['ttl']) && is_numeric($status['ttl']) ? (int) $status['ttl'] : (int) HOUR_IN_SECONDS * 6;
+    if ($ttl <= 0) {
+        $ttl = (int) HOUR_IN_SECONDS * 6;
+    }
 
     set_transient($cache_key, $is_valid ? 1 : 0, $ttl);
-
-    return (bool) $is_valid;
+    return $is_valid;
 }

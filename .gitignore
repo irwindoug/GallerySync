@@ -18,3 +18,9 @@ vendor/
 
 # Node (only if used at repo root)
 # node_modules/
+
+# Ignore temporary text files
+*.tmp*
+
+# Ignore server-side plugin documentation
+docs/plugins/*

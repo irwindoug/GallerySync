@@ -1,0 +1,8 @@
+include:
+  - local: '/.gitlab/ci/wordpress-plugin.yml'
+
+variables:
+  VAULT_ROLE: "wp-plugin-gallerysync"
+  GITHUB_ORG: "irwindoug"
+  GITHUB_REPO: "gallerysync"
+  SQUASH_COMMIT_PREFIX: "release"

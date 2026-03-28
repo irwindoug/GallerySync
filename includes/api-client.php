@@ -3,8 +3,6 @@ if (!defined('ABSPATH')) exit;
 
 define('GALLERY_SYNC_API_BASE_OPT', 'gallery_sync_api_base_url');
 
-define('GALLERY_SYNC_INSTALL_ID_OPT', 'gallery_sync_install_id');
-
 define('GALLERY_SYNC_LICENSE_ACTIVATION_HASH_OPT', 'gallery_sync_license_activation_hash');
 
 function gallery_sync_get_api_base_url(): string {
@@ -24,14 +22,9 @@ function gallery_sync_is_api_configured(): bool {
 }
 
 function gallery_sync_get_install_id(): string {
-    $existing = get_option(GALLERY_SYNC_INSTALL_ID_OPT, '');
-    if (is_string($existing) && $existing !== '') {
-        return $existing;
-    }
-
-    $install_id = wp_generate_uuid4();
-    update_option(GALLERY_SYNC_INSTALL_ID_OPT, $install_id, false);
-    return $install_id;
+    return function_exists('gallery_sync_get_instance_id')
+        ? gallery_sync_get_instance_id()
+        : wp_generate_uuid4();
 }
 
 function gallery_sync_api_request(string $method, string $path, ?array $body = null, int $timeout = 15) {
@@ -90,7 +83,7 @@ function gallery_sync_api_request(string $method, string $path, ?array $body = n
 }
 
 function gallery_sync_activate_license(): void {
-    if (!function_exists('gallery_sync_get_license_key')) {
+    if (!function_exists('gallery_sync_get_license_key') || !function_exists('gallery_sync_licensing_client')) {
         return;
     }
 
@@ -99,13 +92,7 @@ function gallery_sync_activate_license(): void {
         return;
     }
 
-    $payload = [
-        'license_key' => $license,
-        'site_url' => home_url(),
-        'install_id' => gallery_sync_get_install_id(),
-    ];
-
-    gallery_sync_api_request('POST', '/v1/license/activate', $payload);
+    gallery_sync_licensing_client()->validate(true);
 }
 
 function gallery_sync_maybe_activate_license(): void {
@@ -118,7 +105,9 @@ function gallery_sync_maybe_activate_license(): void {
         return;
     }
 
-    $hash = md5($license . '|' . home_url());
+    $instance_id = function_exists('gallery_sync_get_instance_id') ? gallery_sync_get_instance_id() : '';
+    $normalized_domain = function_exists('gallery_sync_normalize_domain') ? gallery_sync_normalize_domain(site_url()) : '';
+    $hash = md5($license . '|' . $instance_id . '|' . $normalized_domain);
     $stored = get_option(GALLERY_SYNC_LICENSE_ACTIVATION_HASH_OPT, '');
 
     if ($stored !== $hash) {

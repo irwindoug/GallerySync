@@ -4,13 +4,13 @@ compatibility_date = "2024-12-01"
 
 [[kv_namespaces]]
 binding = "LICENSES"
-id = "<PROD_LICENSES_NAMESPACE_ID>"
-preview_id = "<PREVIEW_LICENSES_NAMESPACE_ID>"
+id = "a7a1cf5eb08948a2896fd22122ee313e"
+preview_id = "74b624086c4d4dbbbfc91a33cd90bfe7"
 
 [[kv_namespaces]]
 binding = "EVENTS"
-id = "<PROD_EVENTS_NAMESPACE_ID>"
-preview_id = "<PREVIEW_EVENTS_NAMESPACE_ID>"
+id = "5d0ef8e87c994d4d8c65c13505f1be4b"
+preview_id = "ecce8a5fe05548a09a4c8fbe486e27be"
 
 [vars]
 # Non-secret configuration (if needed).

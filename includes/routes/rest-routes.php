@@ -22,6 +22,48 @@ function gallery_sync_register_core_routes(callable $permission_callback): void 
         },
     ]);
 
+    register_rest_route('gallery-sync/v1', '/license/validate', [
+        'methods'             => 'POST',
+        'permission_callback' => $permission_callback,
+        'callback'            => function (WP_REST_Request $request) {
+            if (!function_exists('gallery_sync_licensing_client')) {
+                return new WP_Error('gallery_sync_licensing_missing', 'Licensing client is unavailable.', ['status' => 500]);
+            }
+
+            $raw_key = $request->get_param('license_key');
+            if (is_string($raw_key)) {
+                gallery_sync_update_license_key(sanitize_text_field($raw_key));
+            }
+
+            return gallery_sync_licensing_client()->validate(true);
+        },
+    ]);
+
+    register_rest_route('gallery-sync/v1', '/license/checkout-session', [
+        'methods'             => 'POST',
+        'permission_callback' => $permission_callback,
+        'callback'            => function () {
+            if (!function_exists('gallery_sync_licensing_client')) {
+                return new WP_Error('gallery_sync_licensing_missing', 'Licensing client is unavailable.', ['status' => 500]);
+            }
+
+            $result = gallery_sync_licensing_client()->create_checkout_session();
+            if (!is_array($result)) {
+                return new WP_Error('gallery_sync_checkout_failed', 'Checkout session could not be created.', ['status' => 500]);
+            }
+
+            if (!empty($result['error'])) {
+                return new WP_Error(
+                    'gallery_sync_checkout_failed',
+                    is_string($result['message'] ?? null) ? $result['message'] : 'Checkout session could not be created.',
+                    ['status' => 500, 'error' => $result['error']]
+                );
+            }
+
+            return $result;
+        },
+    ]);
+
     register_rest_route('gallery-sync/v1', '/test', [
         'methods'             => 'GET',
         'permission_callback' => $permission_callback,
@@ -207,15 +249,13 @@ function gallery_sync_register_pro_routes(string $namespace, callable $permissio
             }
 
             $license_key = sanitize_text_field($raw_key);
-            $response = gallery_sync_api_request('POST', '/v1/license/verify', [
-                'license_key' => $license_key,
-                'site_url' => home_url(),
-            ]);
+            gallery_sync_update_license_key($license_key);
 
-            if (is_wp_error($response)) {
-                return new WP_Error('gallery_sync_license_failed', $response->get_error_message(), ['status' => 500]);
+            if (!function_exists('gallery_sync_licensing_client')) {
+                return new WP_Error('gallery_sync_license_failed', 'Licensing client unavailable.', ['status' => 500]);
             }
 
+            $response = gallery_sync_licensing_client()->validate(true);
             return is_array($response) ? $response : ['valid' => false];
         },
     ]);
