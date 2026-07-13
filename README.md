@@ -94,3 +94,27 @@ Open-source WordPress plugin with a Cloudflare Worker license server, Supabase P
 
 - Optional script: `scripts/bootstrap.sh`
 - Uses `gh` CLI to set common GitHub secrets in your fork.
+
+## CI/CD pipeline
+
+- **CI**: shared template from [`ops/ci-templates`](https://gitlab.uplinksync.com/ops/ci-templates) — php lint, phpcs/phpunit via composer scripts, gitleaks secret scan, esbuild asset build, per-MR review app with the plugin active.
+- **Previews**: every MR gets a disposable WordPress at `https://<branch-slug>.preview.uplinksync.com`
+  ("View app" on the MR; basic-auth credentials in Vault `secret/ai/tooling/preview-basic-auth`).
+- **Merges**: `main` is protected; merging requires a green pipeline; humans merge, agents don't.
+- **GitHub**: CI-verified `main` auto-mirrors to [`github.com/irwindoug/GallerySync`](https://github.com/irwindoug/GallerySync).
+
+## Contributing
+
+Branch from `main` (Paperclip agents: `paperclip/<task-id>`), open an MR, let the pipeline
+run, use the preview link to check the result. Never commit literal secrets.
+
+Full runbook: `dirwin/ecosystem` → `docs/103-detail-gitlab-github-hostinger-pipeline.md`.
+
+## Known issues
+
+- **Plugin cannot activate from this repo (missing module).**
+  `includes/admin/loader.php` line 4 requires `includes/helpers/loader.php`, but the
+  `includes/helpers/` directory has never been committed (verified against full git
+  history, first commit 2026-02-03). Activation fatals immediately; CI previews skip
+  activation via `PREVIEW_SKIP_ACTIVATE` until the helpers module is committed from
+  the original working copy. Remove that flag in `.gitlab-ci.yml` when fixed.
