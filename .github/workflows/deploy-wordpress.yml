@@ -1,0 +1,75 @@
+# Deploy a WordPress plugin/theme from GitHub to a Hostinger shared-hosting site.
+# Copy to <repo>/.github/workflows/deploy-wordpress.yml in each GitHub repo.
+#
+# Repo secrets (Settings -> Secrets and variables -> Actions -> Secrets):
+#   HOSTINGER_SSH_HOST   e.g. 185.x.x.x or ssh.hostinger.com host for the account
+#   HOSTINGER_SSH_PORT   Hostinger shared SSH port (typically 65002)
+#   HOSTINGER_SSH_USER   e.g. u123456789
+#   HOSTINGER_SSH_KEY    private key of the per-site deploy keypair (ed25519)
+# Repo variables (same page -> Variables):
+#   REMOTE_PLUGIN_PATH   e.g. domains/example.com/public_html/wp-content/plugins/my-plugin
+#   WP_ROOT              e.g. domains/example.com/public_html   (for wp-cli; optional)
+#   PLUGIN_SLUG          e.g. my-plugin                          (for wp-cli; optional)
+#
+# Master copies of the SSH credentials live in Vault:
+#   secret/infra/hosting/wordpress-shared-ssh
+#
+# Safety: rsync --delete is scoped strictly to REMOTE_PLUGIN_PATH. The guard
+# below refuses to run unless the path contains "/wp-content/", so a mistyped
+# variable can't blow away a site root.
+
+name: Deploy to Hostinger WordPress
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-hostinger
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Deploy stays silently skipped until REMOTE_PLUGIN_PATH is configured on the
+    # repo — lets the workflow ship in every mirror without red runs.
+    if: vars.REMOTE_PLUGIN_PATH != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Validate configuration
+        run: |
+          case "${{ vars.REMOTE_PLUGIN_PATH }}" in
+            */wp-content/*) echo "target path OK" ;;
+            *) echo "REMOTE_PLUGIN_PATH must live under wp-content/ — refusing"; exit 1 ;;
+          esac
+
+      - name: Set up SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.HOSTINGER_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -p "${{ secrets.HOSTINGER_SSH_PORT }}" "${{ secrets.HOSTINGER_SSH_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Build assets (if any)
+        run: |
+          if [ -f package.json ]; then
+            npm ci && npm run build --if-present
+          fi
+
+      - name: Deploy plugin directory
+        run: |
+          rsync -az --delete \
+            --exclude '.git*' --exclude '.github' --exclude 'node_modules' \
+            --exclude 'tests' --exclude 'infrastructure' --exclude '.claude' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.HOSTINGER_SSH_PORT }}" \
+            ./ "${{ secrets.HOSTINGER_SSH_USER }}@${{ secrets.HOSTINGER_SSH_HOST }}:${{ vars.REMOTE_PLUGIN_PATH }}/"
+
+      - name: Activate plugin + flush caches (best effort)
+        if: vars.WP_ROOT != '' && vars.PLUGIN_SLUG != ''
+        continue-on-error: true
+        run: |
+          ssh -i ~/.ssh/deploy_key -p "${{ secrets.HOSTINGER_SSH_PORT }}" \
+            "${{ secrets.HOSTINGER_SSH_USER }}@${{ secrets.HOSTINGER_SSH_HOST }}" \
+            "cd '${{ vars.WP_ROOT }}' && wp plugin activate '${{ vars.PLUGIN_SLUG }}' && wp cache flush"
