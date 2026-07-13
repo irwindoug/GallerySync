@@ -1,24 +1,30 @@
-# Deploy a WordPress plugin/theme from GitHub to a Hostinger shared-hosting site.
-# Copy to <repo>/.github/workflows/deploy-wordpress.yml in each GitHub repo.
+# Deploy a WordPress plugin/theme OR a whole-site wp-content from GitHub to a
+# live WordPress host over SSH (Hostinger shared or any VPS).
+# Copy to <repo>/.github/workflows/deploy-wordpress.yml — committed on the
+# GITLAB side (the mirror force-syncs branches; GitHub-only commits get wiped).
 #
 # Repo secrets (Settings -> Secrets and variables -> Actions -> Secrets):
-#   HOSTINGER_SSH_HOST   e.g. 185.x.x.x or ssh.hostinger.com host for the account
-#   HOSTINGER_SSH_PORT   Hostinger shared SSH port (typically 65002)
-#   HOSTINGER_SSH_USER   e.g. u123456789
+#   HOSTINGER_SSH_HOST   deploy host (Hostinger shared IP or VPS IP)
+#   HOSTINGER_SSH_PORT   65002 on Hostinger shared, 22 on a VPS
+#   HOSTINGER_SSH_USER   e.g. u123456789 or a dedicated deploy user
 #   HOSTINGER_SSH_KEY    private key of the per-site deploy keypair (ed25519)
-# Repo variables (same page -> Variables):
-#   REMOTE_PLUGIN_PATH   e.g. domains/example.com/public_html/wp-content/plugins/my-plugin
-#   WP_ROOT              e.g. domains/example.com/public_html   (for wp-cli; optional)
-#   PLUGIN_SLUG          e.g. my-plugin                          (for wp-cli; optional)
+# Repo variables:
+#   DEPLOY_MODE          "plugin" (default) or "site"
+#   REMOTE_PLUGIN_PATH   plugin mode: .../wp-content/plugins/<slug>
+#                        site mode:   .../wp-content   (the wp-content dir itself)
+#   WP_ROOT              WordPress root, for wp-cli activate/flush (optional)
+#   PLUGIN_SLUG          plugin mode only, for wp-cli activate (optional)
 #
-# Master copies of the SSH credentials live in Vault:
-#   secret/infra/hosting/wordpress-shared-ssh
+# Master credential copies live in Vault (secret/infra/hosting/*, secret/ai/tooling/*).
 #
-# Safety: rsync --delete is scoped strictly to REMOTE_PLUGIN_PATH. The guard
-# below refuses to run unless the path contains "/wp-content/", so a mistyped
-# variable can't blow away a site root.
+# Safety:
+#   plugin mode: rsync --delete, scoped strictly to the plugin dir under wp-content.
+#   site mode:   syncs the repo's wp-content/ over the live wp-content WITHOUT
+#                --delete, excluding uploads/caches/runtime files — live-only
+#                files survive; only files tracked in the repo are overwritten.
+#   The guard refuses REMOTE_PLUGIN_PATH values outside wp-content either way.
 
-name: Deploy to Hostinger WordPress
+name: Deploy to WordPress host
 
 on:
   push:
@@ -26,13 +32,12 @@ on:
   workflow_dispatch: {}
 
 concurrency:
-  group: deploy-hostinger
+  group: deploy-wordpress
   cancel-in-progress: false
 
 jobs:
   deploy:
-    # Deploy stays silently skipped until REMOTE_PLUGIN_PATH is configured on the
-    # repo — lets the workflow ship in every mirror without red runs.
+    # Stays silently skipped until REMOTE_PLUGIN_PATH is configured on the repo.
     if: vars.REMOTE_PLUGIN_PATH != ''
     runs-on: ubuntu-latest
     steps:
@@ -40,10 +45,20 @@ jobs:
 
       - name: Validate configuration
         run: |
-          case "${{ vars.REMOTE_PLUGIN_PATH }}" in
-            */wp-content/*) echo "target path OK" ;;
-            *) echo "REMOTE_PLUGIN_PATH must live under wp-content/ — refusing"; exit 1 ;;
-          esac
+          MODE="${{ vars.DEPLOY_MODE }}"
+          TARGET="${{ vars.REMOTE_PLUGIN_PATH }}"
+          if [ "$MODE" = "site" ]; then
+            case "$TARGET" in
+              */wp-content) echo "site mode, target OK" ;;
+              *) echo "site mode requires REMOTE_PLUGIN_PATH to end in /wp-content — refusing"; exit 1 ;;
+            esac
+            [ -d wp-content ] || { echo "repo has no wp-content/ directory — refusing"; exit 1; }
+          else
+            case "$TARGET" in
+              */wp-content/*) echo "plugin mode, target OK" ;;
+              *) echo "plugin mode requires REMOTE_PLUGIN_PATH under wp-content/ — refusing"; exit 1 ;;
+            esac
+          fi
 
       - name: Set up SSH
         run: |
@@ -58,7 +73,8 @@ jobs:
             npm ci && npm run build --if-present
           fi
 
-      - name: Deploy plugin directory
+      - name: Deploy (plugin mode)
+        if: vars.DEPLOY_MODE != 'site'
         run: |
           rsync -az --delete \
             --exclude '.git*' --exclude '.github' --exclude 'node_modules' \
@@ -66,10 +82,22 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.HOSTINGER_SSH_PORT }}" \
             ./ "${{ secrets.HOSTINGER_SSH_USER }}@${{ secrets.HOSTINGER_SSH_HOST }}:${{ vars.REMOTE_PLUGIN_PATH }}/"
 
-      - name: Activate plugin + flush caches (best effort)
-        if: vars.WP_ROOT != '' && vars.PLUGIN_SLUG != ''
+      - name: Deploy (site mode — no deletions on live)
+        if: vars.DEPLOY_MODE == 'site'
+        run: |
+          rsync -az \
+            --exclude 'uploads/' --exclude 'upgrade/' --exclude 'upgrade-temp-backup/' \
+            --exclude 'cache/' --exclude 'litespeed/' --exclude 'boost-cache/' \
+            --exclude 'jetpack-waf/' --exclude 'jpcrm-storage/' \
+            --exclude 'object-cache.php' --exclude 'advanced-cache.php' \
+            --exclude '*.dat' --exclude '.git*' \
+            -e "ssh -i ~/.ssh/deploy_key -p ${{ secrets.HOSTINGER_SSH_PORT }}" \
+            wp-content/ "${{ secrets.HOSTINGER_SSH_USER }}@${{ secrets.HOSTINGER_SSH_HOST }}:${{ vars.REMOTE_PLUGIN_PATH }}/"
+
+      - name: Activate plugin / flush caches (best effort)
+        if: vars.WP_ROOT != ''
         continue-on-error: true
         run: |
           ssh -i ~/.ssh/deploy_key -p "${{ secrets.HOSTINGER_SSH_PORT }}" \
             "${{ secrets.HOSTINGER_SSH_USER }}@${{ secrets.HOSTINGER_SSH_HOST }}" \
-            "cd '${{ vars.WP_ROOT }}' && wp plugin activate '${{ vars.PLUGIN_SLUG }}' && wp cache flush"
+            "command -v wp >/dev/null && cd '${{ vars.WP_ROOT }}' && { [ -n '${{ vars.PLUGIN_SLUG }}' ] && wp plugin activate '${{ vars.PLUGIN_SLUG }}'; wp cache flush; } || echo 'wp-cli not available; skipped'"
