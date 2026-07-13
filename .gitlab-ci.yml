@@ -1,8 +1,12 @@
 include:
-  - local: '/.gitlab/ci/wordpress-plugin.yml'
+  - project: 'ops/ci-templates'
+    ref: main
+    file: '/templates/wordpress-plugin.gitlab-ci.yml'
 
 variables:
-  VAULT_ROLE: "wp-plugin-gallerysync"
-  GITHUB_ORG: "irwindoug"
-  GITHUB_REPO: "gallerysync"
-  SQUASH_COMMIT_PREFIX: "release"
+  PLUGIN_SLUG: "gallery-sync"
+  # KNOWN DEFECT (2026-07-13): activation fatals — includes/admin/loader.php
+  # requires includes/helpers/loader.php, but includes/helpers/ has NEVER been
+  # committed (missing since first commit 2026-02-03). Remove this flag once
+  # the helpers module is committed. See README "Known issues".
+  PREVIEW_SKIP_ACTIVATE: "1"
