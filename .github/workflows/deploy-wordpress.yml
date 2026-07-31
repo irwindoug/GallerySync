@@ -15,7 +15,7 @@
 #   WP_ROOT              WordPress root, for wp-cli activate/flush (optional)
 #   PLUGIN_SLUG          plugin mode only, for wp-cli activate (optional)
 #
-# Master credential copies live in Vault (secret/infra/hosting/*, secret/ai/tooling/*).
+# Configure the SSH host/user/key/port above as GitHub Actions repo secrets.
 #
 # Safety:
 #   plugin mode: rsync --delete, scoped strictly to the plugin dir under wp-content.

@@ -2,15 +2,17 @@ name = "gallery-sync-workers"
 main = "src/worker.js"
 compatibility_date = "2024-12-01"
 
+# Replace the placeholder ids below with your own Cloudflare KV namespace ids
+# (`wrangler kv:namespace create LICENSES` / `... EVENTS`).
 [[kv_namespaces]]
 binding = "LICENSES"
-id = "a7a1cf5eb08948a2896fd22122ee313e"
-preview_id = "74b624086c4d4dbbbfc91a33cd90bfe7"
+id = "<YOUR_LICENSES_KV_ID>"
+preview_id = "<YOUR_LICENSES_KV_PREVIEW_ID>"
 
 [[kv_namespaces]]
 binding = "EVENTS"
-id = "5d0ef8e87c994d4d8c65c13505f1be4b"
-preview_id = "ecce8a5fe05548a09a4c8fbe486e27be"
+id = "<YOUR_EVENTS_KV_ID>"
+preview_id = "<YOUR_EVENTS_KV_PREVIEW_ID>"
 
 [vars]
 # Non-secret configuration (if needed).
